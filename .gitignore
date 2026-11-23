@@ -1,6 +1,23 @@
+# Local configuration and credentials
 .env
-.claude
+.env.*
+!.env.example
+.claude/
 CLAUDE.md
-bench/observability/mysqld_exporter.my.cnf
+observability/mysqld_exporter.my.cnf
+
+# Installed dependencies and generated benchmark results
+node_modules/
+out/
+coverage/
+*.log
+npm-debug.log*
+
+# Local editor and operating-system files
 .DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local demo recordings
 *.mp4
