@@ -30,3 +30,9 @@ There is no `npm test` script or stated coverage threshold. Run `node --check` o
 ## Commit & Pull Request Guidelines
 
 Git history commonly uses short, scoped subjects such as `perf(*): ...`, `docs(*): ...`, and `build: ...`; use a concise imperative subject with a relevant type and scope. In PRs, describe the workload or reporting change, link its issue when applicable, include the commands and scale used for validation, and attach before/after metrics for performance claims. Document new environment variables and avoid committing credentials or generated `out/` data.
+
+## Relevant project.
+
+You can find the backend and document in [frontend](../frontend/), [backend](../backend/) and [document](../docs/).
+
+If you need them and can't find them. Clone it from [frontend](https://github.com/phuchoang-student-management-system-org/frontend.git), [backend](https://github.com/phuchoang-student-management-system-org/frontend.git) and [document](https://github.com/phuchoang-student-management-system-org/docs.git) to the directories above.
