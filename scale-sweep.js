@@ -3,12 +3,8 @@
 //
 // "The single most valuable artifact this set produces" (01-benchmark-strategy.md §9): not a
 // latency number but a curve -- does each P0 scenario's cost grow flat, linear, or worse than
-// linear as the dataset scales from S1 to S3? Per the Sprint 8 scope decision, this reuses Sprint
-// 7's existing baseline exports (bench/out/*-S{1,2,3}-*.json, still on disk from PM-034) rather
-// than re-running k6 -- those runs are the ones flagged with real gaps (no app restart between
-// scales, host CPU not captured, confounded with the Hikari pool-saturation issue BM-XC-003 exists
-// to isolate), so the classification below is a first read, not a clean isolated result -- see the
-// caveat this script prints.
+// linear as the dataset scales from S1 to S3? Uses the latest available export for each scale;
+// callers must verify those exports belong to the same run series before comparing the curve.
 //
 // Usage: node scale-sweep.js
 
@@ -99,10 +95,9 @@ function main() {
       "linear. <0.3 / 0.3-1.3 / >1.3 are this script's flat/linear/worse cutoffs, not a cited SLO.",
   );
   console.log(
-    "Caveat: built from the 2026-08-26 Sprint 7 baseline exports (PM-034), which that sprint's own " +
-      "findings flag as confounded with 20 VUs queuing against Hikari's untuned default-10 pool -- " +
-      'read this as a first-pass curve, not an isolated result. BM-XC-003 (bench-xc-003) exists to ' +
-      'separate that confound out; a follow-up clean re-run of this sweep is the natural next step.',
+    'Caveat: this report selects the latest export per scenario and scale. Confirm the selected ' +
+      'files share one seed, backend version, protocol, and suitable host load before treating ' +
+      'the curve as comparable evidence.',
   );
 }
 
