@@ -249,31 +249,29 @@ bench-full-catalog: bench-node-modules
 # radius, not the knee -- "other endpoints' latency, sampled concurrently, ... should no longer
 # degrade together with login latency" -- which needs the opposite: the ramp running WHILE
 # something else is measured. This backgrounds a repeating BM-STU-005 (read-single control)
-# loop against student-search.js for the duration of the ramp, following the same
-# background-then-kill shape bench-mixed-soak uses for monitor-soak.js above, and kills it once
-# the ramp completes. Deliberately not one measurement window sized to match the ramp's exact
-# wall-clock (auth-login.js's buildOptions(null, ...) call means no shared warm-up, so that's
-# computable from DURATION/COOLDOWN_DURATION, but brittle to hardcode here) -- the two exports in
-# out/ are meant for a manual before/after p95 comparison, same as this item's Verification section
-# describes; there is no automated pass/fail verdict for a concurrent-degradation check like this.
+# run against student-search.js while the ramp executes. Its VUs log in before the ramp begins,
+# and its JSON point stream permits a p95 comparison for each login stage. Re-launching the control
+# every few seconds would force new logins during the ramp and confound the read-only measurement.
 bench-auth-blast-radius: bench-node-modules
 	@mkdir -p out
 	@echo "IP-08 blast-radius check: BM-IDN-001's ramp running concurrently against a $(BLAST_RADIUS_CONTROL) control."
 	@echo "This is NOT BM-IDN-001's own number -- use bench-auth-ramp alone for that (auth-login.js's header comment)."
-	@( while true; do \
-		k6 run \
-			--env BASE_URL=$(BENCH_BASE_URL) \
-			--env SCALE=$(SCALE) \
-			--env BM_ONLY=$(BLAST_RADIUS_CONTROL) \
-			--env DURATION=10s --env WARMUP_DURATION=1s --env COOLDOWN_DURATION=1s \
-			--quiet \
-			--summary-export=out/auth-blast-radius-control-$(SCALE)-$$(date +%Y%m%dT%H%M%S%N).json \
-			scenarios/student-search.js >/dev/null 2>&1; \
-	done ) & control_pid=$$!; \
+	@tag=$$(date +%Y%m%dT%H%M%S); \
+	k6 run \
+		--env BASE_URL=$(BENCH_BASE_URL) \
+		--env SCALE=$(SCALE) \
+		--env BM_ONLY=$(BLAST_RADIUS_CONTROL) \
+		--env DURATION=185s --env WARMUP_DURATION=15s --env COOLDOWN_DURATION=5s \
+		--out json=out/auth-blast-radius-control-$(SCALE)-$$tag.ndjson \
+		--summary-trend-stats="min,med,avg,p(90),p(95),p(99),max" \
+		--summary-export=out/auth-blast-radius-control-$(SCALE)-$$tag.json \
+		scenarios/student-search.js >out/auth-blast-radius-control-$(SCALE)-$$tag.log 2>&1 & \
+	control_pid=$$!; \
+	sleep 20; \
 	$(MAKE) bench-auth-ramp SCALE=$(SCALE) DURATION=$(DURATION) \
 		WARMUP_DURATION=$(WARMUP_DURATION) COOLDOWN_DURATION=$(COOLDOWN_DURATION); \
-	kill $$control_pid 2>/dev/null || true; \
-	echo ">>> compare out/auth-blast-radius-control-$(SCALE)-*.json p95s against BM-STU-005's own Read-single SLO (<=50ms) -- degradation during the ramp is IP-08's target metric (08-hazard-fix-specs.md)."
+	wait $$control_pid || true; \
+	echo ">>> inspect the control's .ndjson timestamps against the five ramp stages; its VUs log in before the ramp starts."
 
 # The eleven-item roadmap end to end, sequenced by 07-improvement-roadmap.md's phase order (not by
 # IP-* number -- see that document for why config/tooling comes first, search-shape work second,
