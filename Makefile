@@ -129,12 +129,12 @@ bench-ci-smoke: bench-node-modules
 # justify a code change on its own (01-benchmark-strategy.md §5.1) -- it can only support a change
 # whose effect is also visible in a k6 BM-* scenario.
 bench-jmh:
-	cd ../management && ./mvnw --batch-mode --no-transfer-progress test-compile
-	cd ../management && ./mvnw --batch-mode --no-transfer-progress dependency:build-classpath \
+	cd ../backend && ./mvnw --batch-mode --no-transfer-progress test-compile
+	cd ../backend && ./mvnw --batch-mode --no-transfer-progress dependency:build-classpath \
 		-Dmdep.outputFile=target/jmh-classpath.txt -DincludeScope=test
-	cd ../management && java -cp "target/classes:target/test-classes:$$(cat target/jmh-classpath.txt)" \
+	cd ../backend && java -cp "target/classes:target/test-classes:$$(cat target/jmh-classpath.txt)" \
 		org.openjdk.jmh.Main -rf json -rff target/jmh-result.json $(JMH_REGEX)
-	@echo "Result: management/target/jmh-result.json."
+	@echo "Result: backend/target/jmh-result.json."
 
 # --- Sprint 8 (PM-035/036) targets --------------------------------------------------------------
 
