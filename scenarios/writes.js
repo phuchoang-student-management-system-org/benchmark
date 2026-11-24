@@ -15,16 +15,16 @@
 // S1 (20 courses total) may still exhaust BM-CRS-004's shard of deletable courses quickly -- the
 // exec no-ops once its shard is empty rather than erroring; a meaningful sample needs S2/S3.
 //
-// PM-042: each pool is discovered raw during warm-up and sharded lazily, on first use, inside the
-// exec function that actually consumes it -- against *that scenario's own* `vus` and live
-// `vu.idInTest`, not a shared upper bound sized to warm-up's own (larger) VU count. See
-// bench/lib/vuShard.js's header for why sharding once during warm-up against the wrong divisor
-// silently orphans part of the pool.
+// Each target pool is discovered during warm-up and partitioned when its measured executor runs.
+// k6 can reuse a non-contiguous subset of VU IDs for a later scenario, so the divisor must be
+// the maximum allocated VU count across this file; using only the consumer's VU count can make
+// distinct VUs land on the same residue and manufacture optimistic-lock conflicts.
 
 import http from 'k6/http';
 import { check } from 'k6';
 import { vu } from 'k6/execution';
 import { BASE_URL } from '../lib/config.js';
+import { VUS } from '../lib/config.js';
 import { buildOptions } from '../lib/runner.js';
 import { ensureLoggedIn } from '../lib/vuSession.js';
 import { shardFor, uniqueCode } from '../lib/vuShard.js';
@@ -38,13 +38,12 @@ const ENTRIES = [
 
 export const options = buildOptions('warmup', ENTRIES);
 
-function vusFor(id) {
-  return ENTRIES.find((e) => e.id === id).vus;
-}
+const ALLOCATED_VUS = Math.max(VUS, ...ENTRIES.map((e) => e.vus));
 
 // Discovered once per VU during warm-up (never counted in a measured scenario's metrics), raw and
-// unsharded -- each measured exec function shards its own slice of these lazily (see below).
+// unsharded -- each measured exec function partitions its own slice lazily (see below).
 let allStudentCodes = [];
+let studentEmails = {};
 let allIsbns = [];
 let allCourseCodes = [];
 let ownerTargetCode = null;
@@ -59,10 +58,9 @@ export function warmup() {
   const studentsRes = http.get(`${BASE_URL}/api/v1/students?page=0&size=100`, {
     tags: { name: 'warmup' },
   });
-  allStudentCodes =
-    studentsRes.status === 200
-      ? (JSON.parse(studentsRes.body).content || []).map((s) => s.studentCode)
-      : [];
+  const students = studentsRes.status === 200 ? (JSON.parse(studentsRes.body).content || []) : [];
+  allStudentCodes = students.map((s) => s.studentCode);
+  studentEmails = Object.fromEntries(students.map((s) => [s.studentCode, s.email]));
   ownerTargetCode = allStudentCodes.length > 0 ? allStudentCodes[0] : null;
 
   ensureLoggedIn('LIBRARIAN');
@@ -105,7 +103,7 @@ export function bmStu006() {
 export function bmStu007() {
   ensureLoggedIn('REGISTRAR');
   if (myStudentCodes === null) {
-    myStudentCodes = shardFor(allStudentCodes, vu.idInTest, vusFor('BM_STU_007'));
+    myStudentCodes = shardFor(allStudentCodes, vu.idInTest, ALLOCATED_VUS);
   }
   if (myStudentCodes.length === 0) return;
   // Cycling this VU's own shard is fine (repeated updates to the same student, over time, don't
@@ -114,7 +112,7 @@ export function bmStu007() {
   const payload = JSON.stringify({
     firstName: 'Bench',
     lastName: 'Updated',
-    email: `updated-${code}@bench.invalid`,
+    email: studentEmails[code],
     dateOfBirth: '2000-01-01',
   });
   const res = http.put(`${BASE_URL}/api/v1/students/${code}`, payload, {
@@ -130,7 +128,7 @@ export function bmStu007() {
 export function bmBk005() {
   ensureLoggedIn('LIBRARIAN');
   if (myIsbns === null) {
-    myIsbns = shardFor(allIsbns, vu.idInTest, vusFor('BM_BK_005'));
+    myIsbns = shardFor(allIsbns, vu.idInTest, ALLOCATED_VUS);
   }
   if (myIsbns.length === 0 || ownerTargetCode === null) return;
   const isbn = myIsbns[__ITER % myIsbns.length];
@@ -148,7 +146,7 @@ export function bmBk005() {
 export function bmCrs004() {
   ensureLoggedIn('COURSE_ADMINISTRATOR');
   if (myCourseCodes === null) {
-    myCourseCodes = shardFor(allCourseCodes, vu.idInTest, vusFor('BM_CRS_004'));
+    myCourseCodes = shardFor(allCourseCodes, vu.idInTest, ALLOCATED_VUS);
   }
   // Destructive and one-shot per code -- unlike BM-STU-007/BM-BK-005, this can't cycle its shard;
   // it advances a cursor and no-ops once exhausted (03-benchmark-scenarios.md's S1-scale limit).
