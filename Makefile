@@ -207,6 +207,7 @@ bench-mixed-soak: bench-node-modules
 	@mkdir -p out
 	@node monitor-soak.js --scale=$(SCALE) --base-url=$(BENCH_BASE_URL) --interval=30 & \
 	monitor_pid=$$!; \
+	sleep 10; \
 	k6 run \
 		--env BASE_URL=$(BENCH_BASE_URL) \
 		--env SCALE=$(SCALE) \
@@ -216,7 +217,7 @@ bench-mixed-soak: bench-node-modules
 		--summary-export=out/mixed-soak-$(SCALE)-$$(date +%Y%m%dT%H%M%S).json \
 		scenarios/mixed-soak.js; \
 	kill -INT $$monitor_pid 2>/dev/null || true; \
-	sleep 1
+	wait $$monitor_pid
 
 # --- v0.1 roadmap orchestration (docs/Benchmark/07-improvement-roadmap.md IP-01..IP-11,
 # 08-hazard-fix-specs.md's per-item Targets/Verification sections) ------------------------------

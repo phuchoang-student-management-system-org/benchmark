@@ -34,6 +34,7 @@
 
 import http from 'k6/http';
 import { check } from 'k6';
+import { vu } from 'k6/execution';
 import { BASE_URL, credentialsFor } from '../lib/config.js';
 import { ensureLoggedIn } from '../lib/vuSession.js';
 import { mergeThresholds, sloThresholds } from '../lib/slo.js';
@@ -59,35 +60,35 @@ export const options = {
       vus: 6,
       duration: SOAK_DURATION,
       exec: 'librarianExec',
-      startTime: '0s',
+      startTime: '5s',
     },
     course_admin_mix: {
       executor: 'constant-vus',
       vus: 4,
       duration: SOAK_DURATION,
       exec: 'courseAdminExec',
-      startTime: '0s',
+      startTime: '10s',
     },
     student_mix: {
       executor: 'constant-vus',
       vus: 12,
       duration: SOAK_DURATION,
       exec: 'studentExec',
-      startTime: '0s',
+      startTime: '15s',
     },
     BM_IDN_004: {
       executor: 'constant-vus',
       vus: 10,
       duration: SOAK_DURATION,
       exec: 'bmIdn004',
-      startTime: '0s',
+      startTime: '20s',
     },
     BM_XC_002_LOGINS: {
       executor: 'constant-vus',
       vus: 5,
       duration: SOAK_DURATION,
       exec: 'loginsExec',
-      startTime: '0s',
+      startTime: '25s',
     },
   },
   thresholds: mergeThresholds(
@@ -104,17 +105,22 @@ export const options = {
 };
 
 let registrarTarget = null;
+let registrarEmail = null;
 let librarianIsbn = null;
 let librarianOwnerCode = null;
 
 function primeRegistrarTarget() {
   if (registrarTarget !== null) return;
-  const res = http.get(`${BASE_URL}/api/v1/students?page=0&size=20`, {
+  const res = http.get(`${BASE_URL}/api/v1/students?page=0&size=100`, {
     tags: { name: 'mixed-soak-setup' },
   });
   if (res.status === 200) {
     const content = JSON.parse(res.body).content || [];
-    if (content.length > 0) registrarTarget = content[0].studentCode;
+    if (content.length > 0) {
+      const student = content[(vu.idInTest - 1) % content.length];
+      registrarTarget = student.studentCode;
+      registrarEmail = student.email;
+    }
   }
 }
 
@@ -125,7 +131,7 @@ function registrarWrite() {
   const payload = JSON.stringify({
     firstName: 'Bench',
     lastName: 'Soak',
-    email: `soak-${registrarTarget}@bench.invalid`,
+    email: registrarEmail,
     dateOfBirth: '2000-01-01',
   });
   const res = http.put(`${BASE_URL}/api/v1/students/${registrarTarget}`, payload, {
@@ -146,12 +152,12 @@ export function registrarExec() {
 function primeLibrarianTarget() {
   if (librarianIsbn !== null) return;
   ensureLoggedIn('LIBRARIAN');
-  const booksRes = http.get(`${BASE_URL}/api/v1/books?page=0&size=20`, {
+  const booksRes = http.get(`${BASE_URL}/api/v1/books?page=0&size=100`, {
     tags: { name: 'mixed-soak-setup' },
   });
   if (booksRes.status === 200) {
     const content = JSON.parse(booksRes.body).content || [];
-    if (content.length > 0) librarianIsbn = content[0].isbn;
+    if (content.length > 0) librarianIsbn = content[(vu.idInTest - 1) % content.length].isbn;
   }
   // GET /api/v1/students is also LIBRARIAN-readable (SecurityConfig) -- used only to find a valid
   // owner target, not as a benchmark measurement, so it's tagged the same 'mixed-soak-setup' name.

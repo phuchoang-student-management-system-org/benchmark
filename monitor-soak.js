@@ -11,7 +11,8 @@
 // Set-Cookie -> Cookie thread below is the one thing to get right: log in once, keep the resulting
 // JSESSIONID, and send it back on every subsequent request by hand.
 //
-// Usage: node monitor-soak.js --scale=S2 [--base-url=http://localhost:8080] [--interval=30]
+// Usage: node monitor-soak.js --scale=S2 [--base-url=http://localhost:8080]
+//   [--metrics-url=http://localhost:8081] [--interval=30]
 //   [--duration=1800] [--username=bench.system_administrator] [--password=Benchmark123!]
 // Ctrl-C (SIGINT) stops early and still writes whatever was collected.
 
@@ -25,6 +26,7 @@ const OUT_DIR = path.join(__dirname, 'out');
 function parseArgs(argv) {
   const args = {
     baseUrl: 'http://localhost:8080',
+    metricsUrl: 'http://localhost:8081',
     intervalSeconds: 30,
     durationSeconds: null,
     username: 'bench.system_administrator',
@@ -33,6 +35,7 @@ function parseArgs(argv) {
   for (const arg of argv) {
     if (arg.startsWith('--scale=')) args.scale = arg.slice('--scale='.length);
     else if (arg.startsWith('--base-url=')) args.baseUrl = arg.slice('--base-url='.length);
+    else if (arg.startsWith('--metrics-url=')) args.metricsUrl = arg.slice('--metrics-url='.length);
     else if (arg.startsWith('--interval=')) args.intervalSeconds = Number(arg.slice('--interval='.length));
     else if (arg.startsWith('--duration=')) args.durationSeconds = Number(arg.slice('--duration='.length));
     else if (arg.startsWith('--username=')) args.username = arg.slice('--username='.length);
@@ -43,11 +46,16 @@ function parseArgs(argv) {
 }
 
 async function login(baseUrl, username, password) {
-  const res = await fetch(`${baseUrl}/api/v1/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password }),
-  });
+  let res;
+  for (let attempt = 0; attempt < 30; attempt++) {
+    res = await fetch(`${baseUrl}/api/v1/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    if (res.status !== 429) break;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
   if (res.status !== 200) {
     throw new Error(`login as ${username} failed: HTTP ${res.status} ${await res.text()}`);
   }
@@ -57,10 +65,10 @@ async function login(baseUrl, username, password) {
   return setCookie.split(';')[0];
 }
 
-async function sample(baseUrl, cookie) {
+async function sample(baseUrl, metricsUrl, cookie) {
   const headers = { Cookie: cookie };
   const [heapRes, sessionsRes] = await Promise.all([
-    fetch(`${baseUrl}/actuator/metrics/jvm.memory.used?tag=area:heap`, { headers }),
+    fetch(`${metricsUrl}/actuator/metrics/jvm.memory.used?tag=area:heap`, { headers }),
     fetch(`${baseUrl}/api/v1/sessions`, { headers }),
   ]);
   if (heapRes.status !== 200 || sessionsRes.status !== 200) {
@@ -92,7 +100,7 @@ async function main() {
 
   const startedAt = Date.now();
   while (!stopped) {
-    const point = await sample(args.baseUrl, cookie);
+    const point = await sample(args.baseUrl, args.metricsUrl, cookie);
     samples.push(point);
     console.log(
       point.error
