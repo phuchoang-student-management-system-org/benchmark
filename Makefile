@@ -170,8 +170,10 @@ bench-cascade-delete: bench-node-modules
 		--summary-trend-stats="min,med,avg,p(90),p(95),p(99),max" \
 		--summary-export=out/cascade-delete-$(SCALE)-$$(date +%Y%m%dT%H%M%S).json \
 		scenarios/cascade-delete.js; \
-	node seed/cascade-drain.js --since=$$since --scale=$(SCALE) --timeout=120; \
-	echo ">>> cascade-delete is destructive -- restore the dataset (04-workload-data-preparation.md §5) before any other bench-* run at $(SCALE)."
+	node seed/cascade-drain.js --since=$$since --scale=$(SCALE) --expected=260 --timeout=300; \
+	drain_status=$$?; \
+	echo ">>> cascade-delete is destructive -- restore the dataset (04-workload-data-preparation.md §5) before any other bench-* run at $(SCALE)."; \
+	exit $$drain_status
 
 # BM-XC-003: BM-ENR-002 (enrollment-list.js) at VU counts spanning the default, untuned Hikari
 # pool size of 10 -- 5, 10, 20, 40. Distinct export filenames per VUS so the 4 runs don't conflate

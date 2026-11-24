@@ -11,17 +11,15 @@
 // Hand-builds `options.scenarios` instead of using buildOptions(): each stage is a fixed burst
 // (`shared-iterations`, N iterations total, not a steady-state window), which buildOptions()'s
 // constant-vus/duration model doesn't express. Stages are sequential (N10 -> N50 -> N200) and
-// self-limiting: N=50/200 need at least that many students to exist, so a run at S1 (50 students
-// total) will exhaust its N=50/200 pools and no-op the remainder rather than error -- a meaningful
-// sample needs S2/S3. This scenario is destructive: a full dataset restore is mandatory afterward
+// self-limiting: setup() requires 260 distinct students, so this scenario runs only at S2/S3.
+// This scenario is destructive: a full dataset restore is mandatory afterward
 // (04-workload-data-preparation.md §5).
 
 import http from 'k6/http';
 import { check } from 'k6';
-import { vu } from 'k6/execution';
+import { scenario } from 'k6/execution';
 import { BASE_URL } from '../lib/config.js';
 import { ensureLoggedIn } from '../lib/vuSession.js';
-import { shardFor } from '../lib/vuShard.js';
 import { mergeThresholds, sloThresholds } from '../lib/slo.js';
 
 const WARMUP_VUS = 20;
@@ -82,76 +80,54 @@ export const options = {
   noCookiesReset: true,
 };
 
-// Discovered once per VU during warm-up, raw and unsharded -- each stage shards its own slice
-// lazily, on first use, against its own scenario's `vus` above (10/20/20), not warm-up's own
-// (bench/lib/vuShard.js's header explains why the divisor must match the actual consumer).
-let allCodes = [];
-const shard10 = { pool: null };
-const shard50 = { pool: null };
-const shard200 = { pool: null };
-let cursor10 = 0;
-let cursor50 = 0;
-let cursor200 = 0;
-
-export function warmup() {
+// setup() runs once and passes the same target list to every VU, including VUs that did not
+// execute warm-up. A module-scoped list populated in warm-up is private to those VUs and can
+// silently leave later shared-iterations stages without any targets.
+export function setup() {
   ensureLoggedIn('REGISTRAR');
-  // Up to 3 pages of 100 -- enough headroom for 10+50+200=260 distinct codes at S2/S3; at S1 (50
-  // students total) this simply comes back short, and the later stages no-op as documented above.
+  // Up to 3 pages of 100 supply the 10+50+200 distinct codes at S2/S3.
   let codes = [];
+  let cursor = null;
   for (let page = 0; page < 3; page++) {
-    const res = http.get(`${BASE_URL}/api/v1/students?page=${page}&size=100`, {
+    const url = cursor
+      ? `${BASE_URL}/api/v1/students?cursor=${encodeURIComponent(cursor)}&size=100`
+      : `${BASE_URL}/api/v1/students?size=100`;
+    const res = http.get(url, {
       tags: { name: 'warmup' },
     });
     if (res.status !== 200) break;
-    const content = JSON.parse(res.body).content || [];
+    const body = JSON.parse(res.body);
+    const content = body.content || [];
     codes = codes.concat(content.map((s) => s.studentCode));
-    if (content.length < 100) break;
+    cursor = body.nextCursor;
+    if (!cursor) break;
   }
-  allCodes = codes;
+  if (codes.length < 260 || new Set(codes).size !== codes.length) {
+    throw new Error(`Cascade benchmark requires 260 distinct student codes; found ${codes.length}.`);
+  }
+  return codes.slice(0, 260);
 }
 
-function deleteNext(rawSlice, stageVus, shardCache, cursorGetter, cursorSetter, tagName) {
+export function warmup() {
   ensureLoggedIn('REGISTRAR');
-  if (shardCache.pool === null) {
-    shardCache.pool = shardFor(rawSlice, vu.idInTest, stageVus);
-  }
-  const cursor = cursorGetter();
-  if (cursor >= shardCache.pool.length) return;
-  const code = shardCache.pool[cursor];
-  cursorSetter(cursor + 1);
+}
+
+function deleteNext(rawSlice, tagName) {
+  ensureLoggedIn('REGISTRAR');
+  const code = rawSlice[scenario.iterationInTest];
+  if (!code) throw new Error(`No cascade target for ${tagName} iteration ${scenario.iterationInTest}.`);
   const res = http.del(`${BASE_URL}/api/v1/students/${code}`, null, { tags: { name: tagName } });
   check(res, { [`${tagName} status 204`]: (r) => r.status === 204 });
 }
 
-export function bmXc001N10() {
-  deleteNext(
-    allCodes.slice(0, 10),
-    10,
-    shard10,
-    () => cursor10,
-    (v) => (cursor10 = v),
-    'BM_XC_001_N10',
-  );
+export function bmXc001N10(codes) {
+  deleteNext(codes.slice(0, 10), 'BM_XC_001_N10');
 }
 
-export function bmXc001N50() {
-  deleteNext(
-    allCodes.slice(10, 60),
-    20,
-    shard50,
-    () => cursor50,
-    (v) => (cursor50 = v),
-    'BM_XC_001_N50',
-  );
+export function bmXc001N50(codes) {
+  deleteNext(codes.slice(10, 60), 'BM_XC_001_N50');
 }
 
-export function bmXc001N200() {
-  deleteNext(
-    allCodes.slice(60, 260),
-    20,
-    shard200,
-    () => cursor200,
-    (v) => (cursor200 = v),
-    'BM_XC_001_N200',
-  );
+export function bmXc001N200(codes) {
+  deleteNext(codes.slice(60, 260), 'BM_XC_001_N200');
 }

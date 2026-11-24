@@ -113,6 +113,10 @@ async function main() {
     const outFile = path.join(OUT_DIR, `cascade-drain-${scale}-${Date.now()}.json`);
     fs.writeFileSync(outFile, JSON.stringify(result, null, 2));
 
+    if (pending.length > 0 || (expected !== undefined && rows.length !== expected * 2)) {
+      process.exitCode = 1;
+    }
+
     if (pending.length === 0) {
       console.log(
         `All ${rows.length} EVENT_PUBLICATION rows drained in ~${elapsedSeconds.toFixed(1)}s of polling.`,
