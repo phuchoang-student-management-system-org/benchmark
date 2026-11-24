@@ -8,6 +8,7 @@
 
 import http from 'k6/http';
 import { check } from 'k6';
+import { b64encode } from 'k6/encoding';
 import { BASE_URL, SCALE } from '../lib/config.js';
 import { buildOptions } from '../lib/runner.js';
 import { ensureLoggedIn } from '../lib/vuSession.js';
@@ -24,23 +25,11 @@ export const options = buildOptions('warmup', [
   { id: 'BM_STU_005', exec: 'bmStu005' },
 ]);
 
-// Deep-page discovery (BM-STU-004: "last decile of available pages") happens once per VU, during
-// warm-up, so it never counts toward a measured scenario's metrics (02-benchmark-plan.md §2.1 --
-// warm-up is discarded by design). Cached module-scope, which is per-VU state in k6.
-//
-// Sprint 9 (IP-05) replaced page/totalPages with cursor/nextCursor (CursorPage) -- there is no
-// longer a server-reported total to compute "90% of pages" from. Approximate it client-side from
-// the seeded row count for this SCALE (bench/seed/scales.js, the same source of truth the seed
-// generator itself uses) and walk `cursor` forward that many pages during warm-up. Capped at
-// MAX_WALK_STEPS so a large scale can't blow the 15s warm-up window -- at S3 this deliberately
-// undershoots the true 90th-percentile depth; fine for S1/S2, a known limitation if this file is
-// ever run at S3.
+// BM-STU-004 requests the last decile of seeded student codes. Student codes span a known,
+// contiguous range at each scale, so encoding the key at 90% depth creates the same keyset
+// cursor as walking from page one without thousands of warm-up requests at S3.
 const PAGE_SIZE = 20;
-const MAX_WALK_STEPS = 300;
-const targetDepth = Math.min(
-  Math.max(0, Math.floor(Math.ceil((SCALES[SCALE]?.students || 0) / PAGE_SIZE) * 0.9)),
-  MAX_WALK_STEPS,
-);
+const targetDepth = Math.max(0, Math.floor(Math.ceil((SCALES[SCALE]?.students || 0) / PAGE_SIZE) * 0.9));
 
 let deepCursor = null;
 let deepCursorReady = false;
@@ -59,18 +48,11 @@ export function warmup() {
     sampleCodes = (body.content || []).map((s) => s.studentCode);
   }
   if (!deepCursorReady) {
-    let cursor = null;
-    for (let i = 0; i < targetDepth; i++) {
-      const url = cursor
-        ? `${BASE_URL}/api/v1/students?cursor=${encodeURIComponent(cursor)}&size=${PAGE_SIZE}`
-        : `${BASE_URL}/api/v1/students?size=${PAGE_SIZE}`;
-      const walkRes = http.get(url, { tags: { name: 'warmup' } });
-      if (walkRes.status !== 200) break;
-      const nextCursor = parsePage(walkRes).nextCursor;
-      if (!nextCursor) break;
-      cursor = nextCursor;
-    }
-    deepCursor = cursor;
+    // Seeded student codes cover STU000001..STU<scale.students> regardless of insertion order.
+    // The API cursor encodes the last-seen code, so this reaches the last decile at S3
+    // without 2,250 warm-up requests per VU.
+    const lastSeenCode = `STU${String(targetDepth * PAGE_SIZE).padStart(6, '0')}`;
+    deepCursor = targetDepth > 0 ? b64encode(lastSeenCode, 'rawurl') : null;
     deepCursorReady = true;
   }
   http.get(`${BASE_URL}/api/v1/students?query=${encodeURIComponent(pickRandom(searchTerms))}&page=0&size=20`, {
